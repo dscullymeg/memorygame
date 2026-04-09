@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Context Window — Memory Game</title>
+<style>
+  :root {
+    --phi: 1.618;
+    --bg: #0d0d14;
+    --surface: #13131e;
+    --border: #2a2a3e;
+    --text: #e8e8f0;
+    --muted: #5a5a72;
+    --dim: #2e2e44;
+    --header-h: 60px;
+    --display-ratio: 38.2%;
+    --input-ratio: 61.8%;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+    cursor: none;
+  }
+
+  /* ─── Layout ─────────────────────────────────────── */
+  #app {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #header {
+    height: var(--header-h);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  #header h1 {
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  #header .meta {
+    display: flex;
+    gap: 24px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+
+  #header .meta span b {
+    color: var(--text);
+  }
+
+  /* ─── Content split ────────────────────────────────── */
+  #content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ─── Display area (golden top) ───────────────────── */
+  #display {
+    flex: 0 0 var(--display-ratio);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #number-stage {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 6px;
+    align-items: center;
+    justify-content: center;
+    max-width: 900px;
+    width: 100%;
+  }
+
+  .batch-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .batch-group + .batch-group::before {
+    content: '';
+    display: block;
+    width: 2px;
+    height: 48px;
+    background: var(--border);
+    margin: 0 8px;
+  }
+
+  .num-box {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: 900;
+    border-radius: 10px;
+    border: 2px solid;
+    transition: all 0.5s ease;
+    position: relative;
+  }
+
+  .num-box.current {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.35);
+    color: #fff;
+    box-shadow: 0 0 24px rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.05);
+  }
+
+  .num-box.faded {
+    background: transparent;
+    border-color: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.18);
+  }
+
+  /* numbers hidden during the typing phase */
+  .num-box.concealed {
+    background: transparent;
+    border-color: rgba(255,255,255,0.07);
+    color: transparent;
+  }
+  .num-box.concealed::after {
+    content: '·';
+    color: rgba(255,255,255,0.15);
+    font-size: 1.4rem;
+  }
+
+  /* memorise countdown badge */
+  #memorise-badge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  #memorise-badge .mem-label {
+    font-size: 0.55rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  #memorise-badge .mem-count {
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: #ffcc00;
+    line-height: 1;
+  }
+
+  /* timer ring */
+  #timer-wrap {
+    position: absolute;
+    top: 16px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  #timer-svg { transform: rotate(-90deg); }
+
+  #timer-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(90deg);
+    font-size: 1.1rem;
+    font-weight: 900;
+    color: var(--text);
+  }
+
+  #timer-container {
+    position: relative;
+    width: 72px;
+    height: 72px;
+  }
+
+  .timer-ring-bg { fill: none; stroke: var(--dim); stroke-width: 5; }
+  .timer-ring-fg { fill: none; stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset 0.9s linear, stroke 0.5s; }
+
+  /* round label */
+  #round-label {
+    position: absolute;
+    top: 16px;
+    left: 24px;
+    font-size: 0.7rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  #round-label b { color: var(--text); }
+
+  /* expected length hint */
+  #hint {
+    position: absolute;
+    bottom: 14px;
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  /* ─── Input area (golden bottom) ──────────────────── */
+  #inputs {
+    flex: 0 0 var(--input-ratio);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 20px 24px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .player-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .player-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .player-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .player-input-wrap {
+    position: relative;
+  }
+
+  .player-input {
+    width: 220px;
+    padding: 14px 16px;
+    font-family: 'Courier New', monospace;
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    background: rgba(255,255,255,0.04);
+    border: 2px solid;
+    border-radius: 10px;
+    color: var(--text);
+    outline: none;
+    text-align: center;
+    transition: background 0.2s, box-shadow 0.2s;
+    caret-color: transparent;
+  }
+
+  .player-input:focus {
+    background: rgba(255,255,255,0.07);
+  }
+
+  .player-input.correct {
+    background: rgba(68,204,102,0.12);
+    border-color: #44cc66 !important;
+  }
+
+  .player-input.wrong {
+    background: rgba(255,68,85,0.12);
+    border-color: #ff4455 !important;
+  }
+
+  .player-input.submitted {
+    opacity: 0.7;
+  }
+
+  .player-input:disabled {
+    cursor: not-allowed;
+  }
+
+  .submit-btn {
+    width: 100%;
+    padding: 10px;
+    margin-top: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    border: 1px solid;
+    border-radius: 7px;
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    color: var(--text);
+  }
+
+  .submit-btn:hover { background: rgba(255,255,255,0.07); }
+  .submit-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .submitted-badge {
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    opacity: 0.6;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .char-counter {
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  /* ─── Overlay screens ──────────────────────────────── */
+  #overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(13,13,20,0.92);
+    backdrop-filter: blur(6px);
+  }
+
+  #overlay.hidden { display: none; }
+
+  .overlay-box {
+    max-width: 560px;
+    width: 90%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .overlay-box h2 {
+    font-size: 1.5rem;
+    font-weight: 900;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .overlay-box p {
+    font-size: 0.85rem;
+    line-height: 1.7;
+    color: rgba(232,232,240,0.75);
+  }
+
+  .overlay-box .big-btn {
+    padding: 14px 32px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .overlay-box .big-btn:hover { background: rgba(255,255,255,0.14); }
+
+  .player-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .player-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    border: 1px solid;
+    text-transform: uppercase;
+  }
+
+  /* ─── End screen ────────────────────────────────────── */
+  #end-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    background: rgba(13,13,20,0.97);
+    backdrop-filter: blur(8px);
+    overflow-y: auto;
+    padding: 40px 20px;
+  }
+
+  #end-overlay.hidden { display: none; }
+
+  .end-box {
+    max-width: 640px;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 48px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .end-box h2 {
+    font-size: 1.3rem;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  .end-box .tagline {
+    font-size: 1.1rem;
+    color: rgba(255,255,255,0.85);
+    line-height: 1.5;
+  }
+
+  .end-box p {
+    font-size: 0.85rem;
+    line-height: 1.8;
+    color: rgba(232,232,240,0.7);
+  }
+
+  .end-box .analogy-box {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    font-size: 0.82rem;
+    line-height: 1.75;
+    color: rgba(232,232,240,0.75);
+  }
+
+  .end-box .analogy-box strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .stat-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+
+  .stat-card .val {
+    font-size: 1.8rem;
+    font-weight: 900;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .stat-card .lbl {
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .end-box .big-btn {
+    padding: 14px 32px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+    width: 100%;
+  }
+
+  .end-box .big-btn:hover { background: rgba(255,255,255,0.14); }
+
+  /* ─── Result flash ───────────────────────────────────── */
+  #result-banner {
+    position: fixed;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 28px;
+    font-size: 0.8rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  #result-banner.show { opacity: 1; }
+
+  /* ─── Cursors ─────────────────────────────────────────── */
+  .remote-cursor {
+    position: fixed;
+    pointer-events: none;
+    z-index: 300;
+    transform: translate(-4px, -4px);
+    transition: left 0.05s, top 0.05s;
+  }
+
+  .cursor-dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.4);
+    box-shadow: 0 0 8px currentColor;
+  }
+
+  .cursor-label {
+    position: absolute;
+    top: 16px;
+    left: 10px;
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    background: rgba(13,13,20,0.8);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  /* ─── Waiting state ─────────────────────────────────── */
+  #waiting-msg {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #waiting-msg p {
+    font-size: 0.8rem;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+  }
+
+  #waiting-msg .pulse {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.4); }
+  }
+
+  /* ─── Result phase numbers ───────────────────────────── */
+  .num-box.result-correct { border-color: rgba(68,204,102,0.5) !important; color: #44cc66 !important; }
+  .num-box.result-wrong   { border-color: rgba(255,68,85,0.3) !important; }
+
+  /* ─── Scrollbar ─────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 2px; }
+
+  /* ─── Redemption overlay ────────────────────────────── */
+  #redemption-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(13,13,20,0.88);
+    backdrop-filter: blur(8px);
+  }
+  #redemption-overlay.hidden { display: none; }
+
+  .redemption-box {
+    max-width: 480px;
+    width: 90%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+  }
+
+  .redemption-box h2 {
+    font-size: 1.2rem;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #ffcc00;
+  }
+
+  .redemption-box p {
+    font-size: 0.82rem;
+    line-height: 1.7;
+    color: rgba(232,232,240,0.7);
+  }
+
+  .redemption-nums {
+    display: flex;
+    gap: 10px;
+  }
+
+  .redemption-num {
+    width: 56px; height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.8rem;
+    font-weight: 900;
+    border-radius: 10px;
+    border: 2px solid rgba(255,204,0,0.4);
+    background: rgba(255,204,0,0.06);
+    color: #ffcc00;
+  }
+
+  #redemption-input-el {
+    width: 100%;
+    padding: 14px;
+    font-family: 'Courier New', monospace;
+    font-size: 1.6rem;
+    font-weight: 900;
+    letter-spacing: 0.3em;
+    text-align: center;
+    background: rgba(255,255,255,0.04);
+    border: 2px solid rgba(255,204,0,0.4);
+    border-radius: 10px;
+    color: #ffcc00;
+    outline: none;
+  }
+  #redemption-input-el:focus { border-color: #ffcc00; }
+  #redemption-input-el.correct { border-color: #44cc66; color: #44cc66; }
+  #redemption-input-el.wrong   { border-color: #ff4455; color: #ff4455; }
+
+  #redemption-submit-btn {
+    width: 100%;
+    padding: 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    border: 1px solid rgba(255,204,0,0.4);
+    border-radius: 8px;
+    background: transparent;
+    color: #ffcc00;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  #redemption-submit-btn:hover { background: rgba(255,204,0,0.08); }
+  #redemption-submit-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  #redemption-timer-text {
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .redemption-status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .redemption-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+  }
+
+  /* Own cursor */
+  .own-cursor {
+    position: fixed;
+    pointer-events: none;
+    z-index: 301;
+    transform: translate(-5px, -5px);
+  }
+
+  .own-cursor-inner {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.5);
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="header">
+    <h1>Context Window</h1>
+    <div class="meta">
+      <span>Round <b id="hdr-round">—</b> / 10</span>
+      <span>Players <b id="hdr-players">0</b></span>
+      <span id="hdr-phase">Waiting</span>
+    </div>
+  </div>
+
+  <div id="content">
+    <!-- Display area: golden top portion -->
+    <div id="display">
+      <div id="round-label">Round <b id="rl-round">—</b></div>
+
+      <div id="number-stage">
+        <div id="waiting-msg">
+          <p>Waiting for players to start&hellip;</p>
+          <div class="pulse"></div>
+        </div>
+      </div>
+
+      <div id="timer-container" id="timer-wrap" style="display:none">
+        <!-- rebuilt by JS -->
+      </div>
+
+      <div id="hint"></div>
+    </div>
+
+    <!-- Input area: golden bottom portion -->
+    <div id="inputs"></div>
+  </div>
+</div>
+
+<!-- Overlay: waiting room -->
+<div id="overlay">
+  <div class="overlay-box">
+    <h2>Memory Game</h2>
+    <p>Each round flashes three numbers. Memorise them — they'll disappear.<br>
+    Then type the <em>entire sequence backwards</em>, including all previous rounds.<br><br>
+    You get extra time each round. Good luck.</p>
+    <div class="player-list" id="lobby-players"></div>
+    <button class="big-btn" id="start-btn" onclick="sendStart()">Start Game</button>
+    <p style="font-size:0.7rem;color:var(--muted)">Open more browser tabs to add players.</p>
+  </div>
+</div>
+
+<!-- End overlay -->
+<div id="end-overlay" class="hidden">
+  <div class="end-box">
+    <h2>Game Over</h2>
+    <div class="tagline" id="end-tagline"></div>
+
+    <div class="stat-row" id="end-stats"></div>
+
+    <div class="analogy-box" id="analogy-text">
+      <!-- filled by renderEndScreen -->
+    </div>
+
+    <p id="end-scoreboard"></p>
+
+    <button class="big-btn" onclick="sendReset()">Play Again</button>
+  </div>
+</div>
+
+<!-- Redemption overlay -->
+<div id="redemption-overlay" class="hidden">
+  <div class="redemption-box">
+    <h2>Second Chance</h2>
+    <div class="redemption-nums">
+      <div class="redemption-num">1</div>
+      <div class="redemption-num">2</div>
+      <div class="redemption-num">3</div>
+    </div>
+    <p id="redemption-msg"></p>
+    <input id="redemption-input-el" type="text" maxlength="3" autocomplete="off" spellcheck="false" placeholder="___" />
+    <button id="redemption-submit-btn" onclick="doRedemptionSubmit()">Submit ↵</button>
+    <div id="redemption-timer-text"></div>
+    <div class="redemption-status-list" id="redemption-status-list"></div>
+  </div>
+</div>
+
+<!-- Result banner -->
+<div id="result-banner"></div>
+
+<!-- Own cursor -->
+<div class="own-cursor" id="own-cursor">
+  <div class="own-cursor-inner" id="own-cursor-inner"></div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+let myId = null;
+let myColor = '#ffffff';
+let gameSnap = null;
+let ws = null;
+let resultTimeout = null;
+let cursorThrottle = null;
+let inputEl = null; // reference to my input element
+
+// Per-round score tracking
+let myRoundResults = []; // { round, correct }
+
+// Reveal-phase countdown (client-side, 3→0)
+let revealCountdown = 3;
+let revealTicker = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket
+// ─────────────────────────────────────────────────────────────────────────────
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+
+  ws.onopen = () => console.log('Connected');
+
+  ws.onmessage = e => {
+    const data = JSON.parse(e.data);
+    handleMessage(data);
+  };
+
+  ws.onclose = () => {
+    setTimeout(connect, 1500);
+  };
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+function sendStart() { send({ type: 'start' }); }
+function sendReset() { send({ type: 'reset' }); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message handler
+// ─────────────────────────────────────────────────────────────────────────────
+function handleMessage(data) {
+  if (data.type === 'welcome') {
+    myId = data.id;
+    myColor = data.color;
+    document.getElementById('own-cursor-inner').style.background = myColor;
+    document.getElementById('own-cursor-inner').style.boxShadow = `0 0 8px ${myColor}`;
+    return;
+  }
+
+  if (data.type === 'state') {
+    const prevPhase = gameSnap ? gameSnap.game.phase : null;
+    const prevRound = gameSnap ? gameSnap.game.round : null;
+    gameSnap = data;
+
+    const g = data.game;
+
+    // Detect result phase entry to track score
+    if (prevPhase === 'playing' && g.phase === 'result') {
+      const me = data.players[myId];
+      if (me) myRoundResults.push({ round: g.round, correct: me.correct });
+    }
+
+    // New round starting (revealing phase): clear inputs and start memorise countdown
+    if (prevRound !== null && g.round !== prevRound && g.phase === 'revealing') {
+      if (inputEl) { inputEl.value = ''; inputEl.disabled = true; }
+      // Reset redemption input for next round
+      redemptionInputEl = null;
+      const ri = document.getElementById('redemption-input-el');
+      if (ri) { ri.value = ''; ri.disabled = false; ri.style.display = 'block'; ri.classList.remove('correct', 'wrong'); }
+      const rb = document.getElementById('redemption-submit-btn');
+      if (rb) { rb.disabled = false; rb.style.display = 'block'; }
+      startRevealCountdown(g);
+    }
+
+    // Transition into playing: focus input
+    if (prevPhase === 'revealing' && g.phase === 'playing') {
+      setTimeout(() => { if (inputEl) { inputEl.disabled = false; inputEl.focus(); } }, 50);
+    }
+
+    renderAll(data);
+  }
+}
+
+function startRevealCountdown(g) {
+  clearInterval(revealTicker);
+  revealCountdown = 3;
+  revealTicker = setInterval(() => {
+    revealCountdown--;
+    if (revealCountdown <= 0) { clearInterval(revealTicker); revealTicker = null; }
+    renderTimer(g); // refresh just the timer widget
+  }, 1000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────────────────────────────────────────
+function renderAll(data) {
+  const g = data.game;
+  const players = data.players;
+
+  // Header
+  document.getElementById('hdr-round').textContent = g.round || '—';
+  document.getElementById('hdr-players').textContent = Object.keys(players).length;
+  document.getElementById('hdr-phase').textContent = capitalize(g.phase);
+
+  // Overlay
+  const overlay = document.getElementById('overlay');
+  const endOverlay = document.getElementById('end-overlay');
+
+  const redemptionOverlay = document.getElementById('redemption-overlay');
+  const isRedemptionPhase = g.phase === 'redemption' || g.phase === 'redemption_result';
+
+  if (g.phase === 'waiting') {
+    overlay.classList.remove('hidden');
+    endOverlay.classList.add('hidden');
+    redemptionOverlay.classList.add('hidden');
+    renderLobby(players);
+  } else if (g.phase === 'ended') {
+    overlay.classList.add('hidden');
+    endOverlay.classList.remove('hidden');
+    redemptionOverlay.classList.add('hidden');
+    renderEndScreen(g, players);
+  } else if (isRedemptionPhase) {
+    overlay.classList.add('hidden');
+    endOverlay.classList.add('hidden');
+    redemptionOverlay.classList.remove('hidden');
+    renderRedemption(g, players);
+  } else {
+    overlay.classList.add('hidden');
+    endOverlay.classList.add('hidden');
+    redemptionOverlay.classList.add('hidden');
+  }
+
+  // Number stage
+  renderNumbers(g);
+
+  // Timer
+  renderTimer(g);
+
+  // Input area
+  renderInputs(g, players);
+
+  // Remote cursors
+  renderCursors(players);
+
+  // Result banner
+  if (g.phase === 'result') {
+    showResultBanner(g, players);
+  }
+}
+
+function renderLobby(players) {
+  const list = document.getElementById('lobby-players');
+  list.innerHTML = '';
+  Object.values(players).forEach(p => {
+    const chip = document.createElement('div');
+    chip.className = 'player-chip';
+    chip.style.borderColor = p.color + '66';
+    chip.style.color = p.color;
+    chip.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${p.color};display:inline-block"></span>${p.colorName}`;
+    list.appendChild(chip);
+  });
+}
+
+function renderNumbers(g) {
+  const stage = document.getElementById('number-stage');
+  const waitMsg = document.getElementById('waiting-msg');
+
+  if (g.phase === 'waiting') {
+    stage.innerHTML = '';
+    stage.appendChild(waitMsg);
+    waitMsg.style.display = 'flex';
+    document.getElementById('hint').textContent = '';
+    document.getElementById('rl-round').textContent = '—';
+    return;
+  }
+
+  stage.innerHTML = '';
+  document.getElementById('rl-round').textContent = g.round;
+
+  const totalBatches = g.batches.length;
+  const me = gameSnap && gameSnap.players[myId];
+
+  if (g.phase === 'revealing') {
+    // Only show the current (newest) 3 numbers
+    const group = document.createElement('div');
+    group.className = 'batch-group';
+    g.batches[totalBatches - 1].forEach(n => {
+      const box = document.createElement('div');
+      box.className = 'num-box current';
+      box.textContent = n;
+      group.appendChild(box);
+    });
+    stage.appendChild(group);
+
+  } else if (g.phase === 'playing') {
+    // All batches shown as concealed dots — structure visible, no digits
+    g.batches.forEach(batch => {
+      const group = document.createElement('div');
+      group.className = 'batch-group';
+      batch.forEach(() => {
+        const box = document.createElement('div');
+        box.className = 'num-box concealed';
+        group.appendChild(box);
+      });
+      stage.appendChild(group);
+    });
+
+  } else if (g.phase === 'result' || g.phase === 'redemption' || g.phase === 'redemption_result') {
+    // All numbers revealed with correct/wrong colouring
+    g.batches.forEach((batch, bi) => {
+      const isCurrent = bi === totalBatches - 1;
+      const group = document.createElement('div');
+      group.className = 'batch-group';
+      batch.forEach(n => {
+        const box = document.createElement('div');
+        box.className = 'num-box ' + (isCurrent ? 'current' : 'faded');
+        box.textContent = n;
+        if (me && g.phase === 'result') box.classList.add(me.correct ? 'result-correct' : 'result-wrong');
+        group.appendChild(box);
+      });
+      stage.appendChild(group);
+    });
+  }
+
+  // Hint
+  const expected = g.expectedAnswer || '';
+  const hintEl = document.getElementById('hint');
+  if (g.phase === 'playing') {
+    hintEl.textContent = `Type ${expected.length} digit${expected.length !== 1 ? 's' : ''} — full sequence reversed`;
+  } else if (g.phase === 'revealing') {
+    hintEl.textContent = 'Memorise — these will disappear';
+  } else {
+    hintEl.textContent = '';
+  }
+}
+
+function renderTimer(g) {
+  const wrap = document.getElementById('timer-container');
+
+  if (g.phase === 'waiting' || g.phase === 'ended' || g.phase === 'redemption' || g.phase === 'redemption_result') {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  if (g.phase === 'revealing') {
+    wrap.style.display = 'block';
+    wrap.innerHTML = `<div id="memorise-badge">
+      <div class="mem-label">Memorise</div>
+      <div class="mem-count">${Math.max(1, revealCountdown)}</div>
+    </div>`;
+    return;
+  }
+
+  wrap.style.display = 'block';
+
+  const maxTime = 10 + (g.round - 1) * 5;
+  const t = Math.max(0, g.timeLeft);
+  const radius = 28;
+  const circ = 2 * Math.PI * radius;
+  const progress = g.phase === 'result' ? 0 : (t / maxTime);
+  const dashoffset = circ * (1 - progress);
+
+  // Color: green → yellow → red
+  let stroke;
+  if (progress > 0.5) stroke = '#44cc66';
+  else if (progress > 0.25) stroke = '#ffcc00';
+  else stroke = '#ff4455';
+
+  wrap.innerHTML = `
+    <svg id="timer-svg" width="72" height="72" viewBox="0 0 72 72">
+      <circle class="timer-ring-bg" cx="36" cy="36" r="${radius}"/>
+      <circle class="timer-ring-fg"
+        cx="36" cy="36" r="${radius}"
+        stroke="${stroke}"
+        stroke-dasharray="${circ}"
+        stroke-dashoffset="${dashoffset}"
+        style="transform:rotate(-90deg);transform-origin:50% 50%"
+      />
+    </svg>
+    <div id="timer-text" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:1.1rem;font-weight:900;color:${stroke}">
+      ${g.phase === 'result' ? '✓' : t}
+    </div>
+  `;
+}
+
+function renderInputs(g, players) {
+  const area = document.getElementById('inputs');
+  const pids = Object.keys(players);
+
+  // Remove slots for players who left
+  const existing = new Set(Array.from(area.querySelectorAll('.player-slot')).map(el => el.dataset.id));
+  existing.forEach(id => { if (!players[id]) area.querySelector(`[data-id="${id}"]`)?.remove(); });
+
+  pids.forEach(pid => {
+    const p = players[pid];
+    const isMe = pid === myId;
+    let slot = area.querySelector(`[data-id="${pid}"]`);
+
+    if (!slot) {
+      slot = buildSlot(p, isMe);
+      area.appendChild(slot);
+    }
+
+    updateSlot(slot, p, g, isMe);
+  });
+}
+
+function buildSlot(p, isMe) {
+  const slot = document.createElement('div');
+  slot.className = 'player-slot';
+  slot.dataset.id = p.id;
+
+  const label = document.createElement('div');
+  label.className = 'player-label';
+  label.innerHTML = `<span class="player-dot" style="background:${p.color}"></span>
+    <span>${isMe ? p.colorName + ' (you)' : p.colorName}</span>`;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'player-input-wrap';
+
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'player-input';
+  inp.placeholder = isMe ? 'type here…' : '—';
+  inp.style.borderColor = p.color + '88';
+  inp.dataset.pid = p.id;
+  inp.autocomplete = 'off';
+  inp.spellcheck = false;
+
+  if (isMe) {
+    inputEl = inp;
+    inp.addEventListener('input', e => {
+      const val = e.target.value.replace(/[^0-9]/g, '');
+      e.target.value = val;
+      send({ type: 'input', value: val });
+    });
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doSubmit();
+    });
+  } else {
+    inp.readOnly = true;
+  }
+
+  const counter = document.createElement('div');
+  counter.className = 'char-counter';
+  counter.dataset.counter = p.id;
+
+  const btnOrBadge = document.createElement('div');
+  btnOrBadge.dataset.actionarea = p.id;
+
+  if (isMe) {
+    const btn = document.createElement('button');
+    btn.className = 'submit-btn';
+    btn.style.borderColor = p.color + '66';
+    btn.style.color = p.color;
+    btn.textContent = 'Submit';
+    btn.onclick = doSubmit;
+    btnOrBadge.appendChild(btn);
+  } else {
+    btnOrBadge.className = 'submitted-badge';
+  }
+
+  wrap.appendChild(inp);
+  slot.appendChild(label);
+  slot.appendChild(wrap);
+  slot.appendChild(counter);
+  slot.appendChild(btnOrBadge);
+  return slot;
+}
+
+function updateSlot(slot, p, g, isMe) {
+  const inp = slot.querySelector('.player-input');
+  const counter = slot.querySelector(`[data-counter="${p.id}"]`);
+  const actionArea = slot.querySelector(`[data-actionarea="${p.id}"]`);
+
+  const expected = g.expectedAnswer || '';
+  const expLen = expected.length;
+
+  // Other players' input content is always hidden — only show status
+  if (!isMe) {
+    inp.value = '';
+  }
+
+  // Classes
+  inp.classList.remove('correct', 'wrong', 'submitted');
+  if (isMe && p.submitted) inp.classList.add('submitted');
+  if (g.phase === 'result' && isMe) {
+    inp.classList.add(p.correct ? 'correct' : 'wrong');
+    if (p.correct) inp.value = expected;
+  }
+
+  // Disabled states
+  const canType = g.phase === 'playing' && !p.submitted;
+  if (isMe) {
+    inp.disabled = !canType;
+    if (g.phase === 'revealing') inp.value = '';
+    if (canType && document.activeElement !== inp) inp.focus();
+  } else {
+    inp.disabled = true;
+  }
+
+  // Counter
+  const curLen = isMe ? inp.value.length : p.input.length;
+  if (g.phase === 'playing' && expLen > 0) {
+    counter.textContent = `${curLen} / ${expLen}`;
+    counter.style.color = curLen === expLen ? p.color : 'var(--muted)';
+  } else {
+    counter.textContent = '';
+  }
+
+  // Action area (submit btn / badge)
+  if (isMe) {
+    const btn = actionArea.querySelector('.submit-btn');
+    if (btn) {
+      btn.disabled = !canType;
+      if (g.phase === 'result') {
+        btn.textContent = p.correct ? '✓ Correct' : '✗ Wrong';
+        btn.style.color = p.correct ? '#44cc66' : '#ff4455';
+      } else if (g.phase === 'redemption' || g.phase === 'redemption_result') {
+        btn.textContent = p.redeemed === true ? '✓ Redeemed' : p.redeemed === false ? '✗ Failed' : '⟳ Second Chance';
+        btn.style.color = p.redeemed === true ? '#44cc66' : p.redeemed === false ? '#ff4455' : '#ffcc00';
+      } else if (g.phase === 'revealing') {
+        btn.textContent = 'Memorising…';
+        btn.style.color = '#ffcc00';
+      } else if (p.submitted) {
+        btn.textContent = 'Waiting…';
+      } else {
+        btn.textContent = 'Submit ↵';
+        btn.style.color = p.color;
+      }
+    }
+  } else {
+    const isRedemption = g.phase === 'redemption' || g.phase === 'redemption_result';
+    if (isRedemption) {
+      const txt = p.redeemed === true ? '✓ Redeemed' : p.redeemed === false ? '✗ Failed' : p.canRedeem ? 'Attempting…' : 'Safe';
+      const col = p.redeemed === true ? '#44cc66' : p.redeemed === false ? '#ff4455' : 'var(--muted)';
+      actionArea.textContent = txt;
+      actionArea.style.color = col;
+    } else if (p.submitted) {
+      actionArea.textContent = p.correct === null ? 'Submitted' : (p.correct ? '✓ Correct' : '✗ Wrong');
+      actionArea.style.color = p.correct === null ? 'var(--muted)' : (p.correct ? '#44cc66' : '#ff4455');
+    } else {
+      actionArea.textContent = g.phase === 'playing' ? 'Playing…' : g.phase === 'revealing' ? 'Memorising…' : '';
+      actionArea.style.color = 'var(--muted)';
+    }
+  }
+}
+
+function doSubmit() {
+  if (!inputEl) return;
+  send({ type: 'submit', value: inputEl.value });
+}
+
+let redemptionInputEl = null;
+
+function doRedemptionSubmit() {
+  if (!redemptionInputEl) return;
+  send({ type: 'redemption_submit', value: redemptionInputEl.value });
+  redemptionInputEl.disabled = true;
+  document.getElementById('redemption-submit-btn').disabled = true;
+}
+
+function renderRedemption(g, players) {
+  const me = players[myId];
+  if (!me) return;
+
+  const inputEl2 = document.getElementById('redemption-input-el');
+  const submitBtn = document.getElementById('redemption-submit-btn');
+  const timerText = document.getElementById('redemption-timer-text');
+  const msgEl = document.getElementById('redemption-msg');
+  const statusList = document.getElementById('redemption-status-list');
+
+  const isDone = g.phase === 'redemption_result';
+  const iCanRedeem = me.canRedeem && !me.redemptionSubmitted && !isDone;
+
+  // Wire up redemption input
+  if (!redemptionInputEl) {
+    redemptionInputEl = inputEl2;
+    inputEl2.addEventListener('input', e => {
+      const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
+      e.target.value = val;
+      send({ type: 'redemption_input', value: val });
+    });
+    inputEl2.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doRedemptionSubmit();
+    });
+  }
+
+  if (isDone) {
+    // Show result
+    inputEl2.style.display = 'none';
+    submitBtn.style.display = 'none';
+    timerText.textContent = '';
+    msgEl.textContent = me.redeemed === true
+      ? 'You remembered. The sequence continues.'
+      : me.redeemed === false
+        ? 'Second chance missed. The sequence ends here.'
+        : me.correct
+          ? 'You passed the round — no redemption needed.'
+          : '';
+    inputEl2.classList.toggle('correct', me.redeemed === true);
+    inputEl2.classList.toggle('wrong', me.redeemed === false);
+  } else if (me.canRedeem) {
+    // Active redemption for this player
+    inputEl2.style.display = 'block';
+    submitBtn.style.display = 'block';
+    inputEl2.disabled = me.redemptionSubmitted;
+    submitBtn.disabled = me.redemptionSubmitted;
+    timerText.textContent = `${g.redemptionTimeLeft}s remaining`;
+    msgEl.innerHTML = 'The sequence always starts here.<br>Type these three numbers in reverse to continue.';
+    if (!me.redemptionSubmitted && document.activeElement !== inputEl2) inputEl2.focus();
+  } else {
+    // Observer — passed the round or already used redemption
+    inputEl2.style.display = 'none';
+    submitBtn.style.display = 'none';
+    timerText.textContent = me.hasUsedRedemption
+      ? 'You have already used your second chance.'
+      : `${g.redemptionTimeLeft}s remaining`;
+    msgEl.textContent = me.correct
+      ? 'You passed this round.'
+      : 'Your second chance has been used.';
+  }
+
+  // Status list
+  statusList.innerHTML = '';
+  Object.values(players).forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'redemption-status-row';
+    const dot = `<span style="width:8px;height:8px;border-radius:50%;background:${p.color};display:inline-block;flex-shrink:0"></span>`;
+    let status = '';
+    if (isDone) {
+      status = p.redeemed === true ? '<span style="color:#44cc66">✓ Redeemed</span>'
+             : p.redeemed === false ? '<span style="color:#ff4455">✗ Failed</span>'
+             : p.correct ? '<span style="color:#44cc66">✓ Passed round</span>'
+             : '<span style="color:var(--muted)">—</span>';
+    } else {
+      status = p.canRedeem
+        ? (p.redemptionSubmitted ? '<span style="color:#ffcc00">Submitted</span>' : '<span style="color:var(--muted)">Attempting…</span>')
+        : p.correct ? '<span style="color:#44cc66">Safe</span>'
+        : '<span style="color:var(--muted)">No attempt available</span>';
+    }
+    row.innerHTML = `${dot}<span style="color:${p.color}">${p.colorName}</span>&ensp;${status}`;
+    statusList.appendChild(row);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cursors
+// ─────────────────────────────────────────────────────────────────────────────
+function renderCursors(players) {
+  // Remove stale
+  document.querySelectorAll('.remote-cursor').forEach(el => {
+    if (!players[el.dataset.id]) el.remove();
+  });
+
+  Object.values(players).forEach(p => {
+    if (p.id === myId) return;
+    let el = document.querySelector(`.remote-cursor[data-id="${p.id}"]`);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'remote-cursor';
+      el.dataset.id = p.id;
+      el.innerHTML = `
+        <div class="cursor-dot" style="background:${p.color};color:${p.color}"></div>
+        <div class="cursor-label" style="color:${p.color}">${p.colorName}</div>
+      `;
+      document.body.appendChild(el);
+    }
+    el.style.left = (p.cursor.x * window.innerWidth) + 'px';
+    el.style.top = (p.cursor.y * window.innerHeight) + 'px';
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Result banner
+// ─────────────────────────────────────────────────────────────────────────────
+function showResultBanner(g, players) {
+  const banner = document.getElementById('result-banner');
+  const me = players[myId];
+  if (!me) return;
+
+  clearTimeout(resultTimeout);
+  banner.textContent = me.correct
+    ? `✓  Correct! Answer: ${g.expectedAnswer}`
+    : `✗  Wrong. Answer was: ${g.expectedAnswer}`;
+  banner.style.color = me.correct ? '#44cc66' : '#ff4455';
+  banner.style.borderColor = me.correct ? '#44cc6644' : '#ff445544';
+  banner.classList.add('show');
+
+  resultTimeout = setTimeout(() => banner.classList.remove('show'), 2800);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// End screen
+// ─────────────────────────────────────────────────────────────────────────────
+function renderEndScreen(g, players) {
+  const me = players[myId];
+  if (!me) return;
+
+  const correct = myRoundResults.filter(r => r.correct).length;
+  const total = myRoundResults.length || g.round;
+  const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const firstWrong = myRoundResults.find(r => !r.correct);
+  const streakEnd = firstWrong ? firstWrong.round - 1 : total;
+  const allFailedRound = g.round < 10; // ended early = everyone failed a round
+
+  // Tagline
+  document.getElementById('end-tagline').textContent =
+    allFailedRound
+      ? `Everyone lost the thread on round ${g.round}. That's where the sequence broke.`
+      : correct >= 8 ? 'Impressive recall. Most people crack well before round 7.'
+      : correct >= 5 ? `You held it together to round ${streakEnd}. Then the digits slipped.`
+      : correct >= 3 ? `Round ${streakEnd + 1} is where it fell apart.`
+      : 'The sequence defeated you early. That\'s more common than you\'d think.';
+
+  document.getElementById('end-stats').innerHTML = `
+    <div class="stat-card">
+      <span class="val" style="color:#44cc66">${correct}</span>
+      <span class="lbl">Rounds Correct</span>
+    </div>
+    <div class="stat-card">
+      <span class="val" style="color:#4488ff">${streakEnd}</span>
+      <span class="lbl">Best Streak</span>
+    </div>
+    <div class="stat-card">
+      <span class="val">${pct}%</span>
+      <span class="lbl">Accuracy</span>
+    </div>
+  `;
+
+  // Analogy — now revealed for the first time
+  const digitsFailed = g.round * 3;
+  document.getElementById('analogy-text').innerHTML = `
+    <strong>What this has to do with AI</strong>
+    Round one was always <strong>1 — 2 — 3</strong>. You probably still remember it now.
+    That's not a coincidence — it's the point.<br><br>
+    AI language models are the same. The very start of a conversation is almost always
+    well-retained. Ask an AI to recall something from your first message and it usually can.
+    But as the conversation grows longer, something shifts.<br><br>
+    The model has a <em>context window</em> — a fixed amount of text it can actively process
+    at once. As new messages arrive, older ones get pushed toward the edge.
+    Instructions, facts, and nuance buried in the middle of a long conversation become
+    unreliable — not because the model is forgetting, but because it literally
+    cannot see past its own window edge.<br><br>
+    Researchers call this the <em>"lost in the middle"</em> effect: information at the very
+    start and very end of context is recalled well; everything in between degrades.<br><br>
+    Today's frontier models have context windows from <strong>128,000</strong> to
+    <strong>1,000,000+ tokens</strong>. Even so, the lost-in-the-middle problem persists.<br><br>
+    You could always remember 1 — 2 — 3. But by round ${g.round}, the middle was gone.
+  `;
+
+  // Scoreboard
+  const allP = Object.values(players);
+  if (allP.length > 1) {
+    const rows = allP.map(p => {
+      const dot = `<span style="width:8px;height:8px;border-radius:50%;background:${p.color};display:inline-block;margin-right:6px"></span>`;
+      const status = p.correct === null ? '—' : (p.correct ? '✓' : '✗');
+      return `${dot}${p.colorName} — last round: ${status}`;
+    }).join('<br>');
+    document.getElementById('end-scoreboard').innerHTML = rows;
+  } else {
+    document.getElementById('end-scoreboard').textContent = '';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mouse tracking
+// ─────────────────────────────────────────────────────────────────────────────
+document.addEventListener('mousemove', e => {
+  // Own cursor
+  const oc = document.getElementById('own-cursor');
+  oc.style.left = e.clientX + 'px';
+  oc.style.top = e.clientY + 'px';
+
+  if (cursorThrottle) return;
+  cursorThrottle = setTimeout(() => {
+    cursorThrottle = null;
+    send({
+      type: 'cursor',
+      cursor: {
+        x: e.clientX / window.innerWidth,
+        y: e.clientY / window.innerHeight,
+      }
+    });
+  }, 40);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function capitalize(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boot
+// ─────────────────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>
